@@ -18,7 +18,7 @@ const ICTMultiTFBacktester = () => {
     riskPerTrade: 2,
     riskRewardRatio: 3,
     useKillZones: true,
-    minConfluence: 3,
+    minConfluence: 2, // Lowered for easier testing
     useM1: false,
     obLookback: 20,
     fvgMinPips: 10,
@@ -30,40 +30,58 @@ const ICTMultiTFBacktester = () => {
     return new Promise((resolve, reject) => {
       Papa.parse(file, {
         header: false,
-        dynamicTyping: true,
         skipEmptyLines: true,
         complete: (results) => {
           try {
-            const parsed = results.data.slice(1).map(row => {
-              const parts = row[0].split('\t');
+            const parsed = [];
+            
+            for (let i = 1; i < results.data.length; i++) {
+              const row = results.data[i];
+              if (!row || !row[0]) continue;
+              
+              // Split by tab
+              const parts = String(row[0]).split('\t').map(p => p.trim());
+              if (parts.length < 7) continue;
+              
+              let candle;
               if (isDaily) {
-                const [dateStr, open, high, low, close, tickvol, vol, spread] = parts;
-                return {
-                  date: dateStr,
+                // Daily format: DATE, OPEN, HIGH, LOW, CLOSE, TICKVOL, VOL, SPREAD
+                candle = {
+                  date: parts[0],
                   time: '00:00',
-                  open: parseFloat(open),
-                  high: parseFloat(high),
-                  low: parseFloat(low),
-                  close: parseFloat(close),
-                  volume: parseFloat(tickvol) || 0,
-                  timestamp: new Date(dateStr)
+                  open: parseFloat(parts[1]),
+                  high: parseFloat(parts[2]),
+                  low: parseFloat(parts[3]),
+                  close: parseFloat(parts[4]),
+                  volume: parseFloat(parts[5]) || 0,
+                  timestamp: new Date(parts[0])
                 };
               } else {
-                const [dateStr, timeStr, open, high, low, close, tickvol, vol, spread] = parts;
-                return {
-                  date: dateStr,
-                  time: timeStr,
-                  open: parseFloat(open),
-                  high: parseFloat(high),
-                  low: parseFloat(low),
-                  close: parseFloat(close),
-                  volume: parseFloat(tickvol) || 0,
-                  timestamp: new Date(`${dateStr} ${timeStr}`)
+                // Intraday format: DATE, TIME, OPEN, HIGH, LOW, CLOSE, TICKVOL, VOL, SPREAD
+                candle = {
+                  date: parts[0],
+                  time: parts[1],
+                  open: parseFloat(parts[2]),
+                  high: parseFloat(parts[3]),
+                  low: parseFloat(parts[4]),
+                  close: parseFloat(parts[5]),
+                  volume: parseFloat(parts[6]) || 0,
+                  timestamp: new Date(`${parts[0]} ${parts[1]}`)
                 };
               }
-            }).filter(d => !isNaN(d.open) && d.open > 0);
+              
+              // Validate candle
+              if (!isNaN(candle.open) && !isNaN(candle.high) && !isNaN(candle.low) && !isNaN(candle.close) && 
+                  candle.open > 0 && candle.high > 0 && candle.low > 0 && candle.close > 0 &&
+                  !isNaN(candle.timestamp.getTime())) {
+                parsed.push(candle);
+              }
+            }
+            
+            console.log(`Parsed ${parsed.length} valid candles from ${isDaily ? 'Daily' : 'Intraday'} data`);
             resolve(parsed);
           } catch (error) {
+            console.error('Parse error:', error);
             reject(error);
           }
         },
@@ -80,10 +98,12 @@ const ICTMultiTFBacktester = () => {
     try {
       const isDaily = tf === 'daily';
       const parsedData = await parseCSV(file, isDaily);
+      console.log(`${tf.toUpperCase()}: Loaded ${parsedData.length} bars`);
       setTimeframes(prev => ({ ...prev, [tf]: parsedData }));
       setLoading(false);
     } catch (error) {
       console.error(`Error parsing ${tf}:`, error);
+      alert(`Error loading ${tf} file. Check console for details.`);
       setLoading(false);
     }
   };
@@ -517,6 +537,10 @@ const ICTMultiTFBacktester = () => {
         }
       });
       
+      if (trades.length === 0) {
+        alert(`⚠️ No trades found!\n\nPossible reasons:\n- Daily/H4 bias not aligned\n- Min confluence too high (try 2.0)\n- Kill zones filter too restrictive\n- No valid setups in data period\n\nTry lowering Min Confluence or disabling Kill Zones.`);
+      }
+      
       setLoading(false);
     }, 100);
   };
@@ -543,11 +567,11 @@ const ICTMultiTFBacktester = () => {
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             {[
-              { key: 'm1', label: 'M1 (Optional)', color: 'purple' },
-              { key: 'm5', label: 'M5 (Entry)*', color: 'green' },
-              { key: 'h1', label: 'H1 (FVG)*', color: 'blue' },
-              { key: 'h4', label: 'H4 (OB)*', color: 'orange' },
-              { key: 'daily', label: 'Daily (Bias)*', color: 'red' }
+              { key: 'm1', label: 'M1 (Optional)', color: 'purple', required: false },
+              { key: 'm5', label: 'M5 (Entry)*', color: 'green', required: true },
+              { key: 'h1', label: 'H1 (FVG)*', color: 'blue', required: true },
+              { key: 'h4', label: 'H4 (OB)*', color: 'orange', required: true },
+              { key: 'daily', label: 'Daily (Bias)*', color: 'red', required: true }
             ].map(tf => (
               <div key={tf.key} className="text-center">
                 <label className={`block bg-${tf.color}-600 hover:bg-${tf.color}-700 text-white px-4 py-3 rounded-lg cursor-pointer transition text-sm font-bold`}>
@@ -560,7 +584,17 @@ const ICTMultiTFBacktester = () => {
                   />
                 </label>
                 {timeframes[tf.key] && (
-                  <p className="text-green-400 text-xs mt-1">✓ {timeframes[tf.key].length} bars</p>
+                  <div className="mt-2">
+                    <p className="text-green-400 text-xs font-bold">✓ {timeframes[tf.key].length.toLocaleString()} bars</p>
+                    {timeframes[tf.key].length > 0 && (
+                      <p className="text-slate-500 text-xs">
+                        {new Date(timeframes[tf.key][0].timestamp).toLocaleDateString()} - {new Date(timeframes[tf.key][timeframes[tf.key].length - 1].timestamp).toLocaleDateString()}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {!timeframes[tf.key] && tf.required && (
+                  <p className="text-yellow-400 text-xs mt-1">⚠️ Required</p>
                 )}
               </div>
             ))}
@@ -601,7 +635,10 @@ const ICTMultiTFBacktester = () => {
               />
             </div>
             <div>
-              <label className="text-sm text-slate-400">Min Confluence</label>
+              <label className="text-sm text-slate-400 flex items-center gap-1">
+                Min Confluence
+                <span className="cursor-help" title="Higher = more selective. Score from Daily bias (2), H4 OB (1.5), H1 FVG (1), Liquidity (0.5)">ℹ️</span>
+              </label>
               <input
                 type="number"
                 step="0.5"
@@ -609,6 +646,7 @@ const ICTMultiTFBacktester = () => {
                 onChange={(e) => setSettings({...settings, minConfluence: +e.target.value})}
                 className="w-full bg-slate-700 text-white rounded px-3 py-2 mt-1"
               />
+              <p className="text-xs text-slate-500 mt-1">2=Relaxed, 3=Balanced, 4+=Strict</p>
             </div>
             <div>
               <label className="text-sm text-slate-400">Stop Loss (pips)</label>
@@ -629,16 +667,20 @@ const ICTMultiTFBacktester = () => {
               />
             </div>
             <div>
-              <label className="text-sm text-slate-400">FVG Min (pips)</label>
+              <label className="text-sm text-slate-400 flex items-center gap-1">
+                FVG Min (pips)
+                <span className="cursor-help" title="Minimum gap size to be considered a Fair Value Gap">ℹ️</span>
+              </label>
               <input
                 type="number"
                 value={settings.fvgMinPips}
                 onChange={(e) => setSettings({...settings, fvgMinPips: +e.target.value})}
                 className="w-full bg-slate-700 text-white rounded px-3 py-2 mt-1"
               />
+              <p className="text-xs text-slate-500 mt-1">10-15 pips typical</p>
             </div>
             <div className="flex items-end">
-              <label className="flex items-center text-white text-sm">
+              <label className="flex items-center text-white text-sm cursor-help" title="Only trade during London (7-10 GMT) or New York (12-15 GMT) sessions">
                 <input
                   type="checkbox"
                   checked={settings.useKillZones}
@@ -649,12 +691,13 @@ const ICTMultiTFBacktester = () => {
               </label>
             </div>
             <div className="flex items-end">
-              <label className="flex items-center text-white text-sm">
+              <label className="flex items-center text-white text-sm cursor-help" title="Use 1-minute chart for entries instead of 5-minute (requires M1 data)">
                 <input
                   type="checkbox"
                   checked={settings.useM1}
                   onChange={(e) => setSettings({...settings, useM1: e.target.checked})}
                   className="mr-2"
+                  disabled={!timeframes.m1}
                 />
                 Use M1 Entry
               </label>
@@ -665,7 +708,7 @@ const ICTMultiTFBacktester = () => {
                 disabled={filesLoaded < 4 || loading}
                 className="w-full bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white px-4 py-2 rounded-lg transition font-bold"
               >
-                {loading ? 'Running...' : '🚀 Run Backtest'}
+                {loading ? '⏳ Running...' : '🚀 Run Backtest'}
               </button>
             </div>
           </div>
