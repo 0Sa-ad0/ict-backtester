@@ -25,67 +25,126 @@ const ICTMultiTFBacktester = () => {
     stopLossPips: 20,
     maxTradesPerDay: 3
   });
+  const [debugInfo, setDebugInfo] = useState('');
 
   const parseCSV = (file, isDaily = false) => {
     return new Promise((resolve, reject) => {
       Papa.parse(file, {
         header: false,
         skipEmptyLines: true,
+        delimiter: '\t', // Force tab delimiter
         complete: (results) => {
           try {
             const parsed = [];
+            const debug = [];
             
+            console.log(`Total rows in CSV: ${results.data.length}`);
+            
+            // Skip header row (first row)
             for (let i = 1; i < results.data.length; i++) {
               const row = results.data[i];
-              if (!row || !row[0]) continue;
+              if (!row || row.length === 0) continue;
               
-              // Split by tab
-              const parts = String(row[0]).split('\t').map(p => p.trim());
-              if (parts.length < 7) continue;
-              
-              let candle;
-              if (isDaily) {
-                // Daily format: DATE, OPEN, HIGH, LOW, CLOSE, TICKVOL, VOL, SPREAD
-                candle = {
-                  date: parts[0],
-                  time: '00:00',
-                  open: parseFloat(parts[1]),
-                  high: parseFloat(parts[2]),
-                  low: parseFloat(parts[3]),
-                  close: parseFloat(parts[4]),
-                  volume: parseFloat(parts[5]) || 0,
-                  timestamp: new Date(parts[0])
-                };
+              // Get the data - might be in row[0] as string or row as array
+              let parts;
+              if (typeof row[0] === 'string' && row.length === 1) {
+                // Single column with tabs
+                parts = row[0].split('\t');
+              } else if (Array.isArray(row)) {
+                // Already split
+                parts = row;
               } else {
-                // Intraday format: DATE, TIME, OPEN, HIGH, LOW, CLOSE, TICKVOL, VOL, SPREAD
-                candle = {
-                  date: parts[0],
-                  time: parts[1],
-                  open: parseFloat(parts[2]),
-                  high: parseFloat(parts[3]),
-                  low: parseFloat(parts[4]),
-                  close: parseFloat(parts[5]),
-                  volume: parseFloat(parts[6]) || 0,
-                  timestamp: new Date(`${parts[0]} ${parts[1]}`)
-                };
+                continue;
               }
               
-              // Validate candle
-              if (!isNaN(candle.open) && !isNaN(candle.high) && !isNaN(candle.low) && !isNaN(candle.close) && 
-                  candle.open > 0 && candle.high > 0 && candle.low > 0 && candle.close > 0 &&
-                  !isNaN(candle.timestamp.getTime())) {
-                parsed.push(candle);
+              // Clean up parts
+              parts = parts.map(p => String(p).replace(/[<>]/g, '').trim()).filter(p => p);
+              
+              if (parts.length < 5) {
+                if (i < 5) console.log(`Row ${i} skipped (not enough columns):`, parts);
+                continue;
+              }
+              
+              let candle;
+              try {
+                if (isDaily) {
+                  // Daily: DATE, OPEN, HIGH, LOW, CLOSE, TICKVOL, VOL, SPREAD
+                  candle = {
+                    date: parts[0],
+                    time: '00:00',
+                    open: parseFloat(parts[1]),
+                    high: parseFloat(parts[2]),
+                    low: parseFloat(parts[3]),
+                    close: parseFloat(parts[4]),
+                    volume: parseFloat(parts[5] || 0),
+                    timestamp: new Date(parts[0])
+                  };
+                } else {
+                  // Intraday: DATE, TIME, OPEN, HIGH, LOW, CLOSE, TICKVOL, VOL, SPREAD
+                  candle = {
+                    date: parts[0],
+                    time: parts[1],
+                    open: parseFloat(parts[2]),
+                    high: parseFloat(parts[3]),
+                    low: parseFloat(parts[4]),
+                    close: parseFloat(parts[5]),
+                    volume: parseFloat(parts[6] || 0),
+                    timestamp: new Date(`${parts[0]} ${parts[1]}`)
+                  };
+                }
+                
+                // Strict validation
+                const isValid = 
+                  !isNaN(candle.open) && candle.open > 0 &&
+                  !isNaN(candle.high) && candle.high > 0 &&
+                  !isNaN(candle.low) && candle.low > 0 &&
+                  !isNaN(candle.close) && candle.close > 0 &&
+                  candle.high >= candle.low &&
+                  candle.high >= candle.open &&
+                  candle.high >= candle.close &&
+                  candle.low <= candle.open &&
+                  candle.low <= candle.close &&
+                  !isNaN(candle.timestamp.getTime()) &&
+                  candle.timestamp.getFullYear() > 2000;
+                
+                if (isValid) {
+                  parsed.push(candle);
+                  
+                  // Debug first few
+                  if (parsed.length <= 3) {
+                    debug.push(`Row ${i}: ${candle.date} ${candle.time} O=${candle.open} H=${candle.high} L=${candle.low} C=${candle.close}`);
+                  }
+                } else if (i < 5) {
+                  console.log(`Row ${i} validation failed:`, candle);
+                }
+              } catch (e) {
+                if (i < 5) console.log(`Row ${i} error:`, e.message);
               }
             }
             
-            console.log(`Parsed ${parsed.length} valid candles from ${isDaily ? 'Daily' : 'Intraday'} data`);
+            console.log(`✅ Successfully parsed ${parsed.length} valid candles`);
+            if (debug.length > 0) {
+              console.log('Sample parsed data:');
+              debug.forEach(d => console.log(d));
+            }
+            
+            if (parsed.length === 0) {
+              console.error('❌ No valid candles parsed. Check format!');
+            }
+            
+            setDebugInfo(prev => prev + `\n✅ Loaded ${parsed.length} bars`);
             resolve(parsed);
           } catch (error) {
-            console.error('Parse error:', error);
+            console.error('❌ Fatal parse error:', error);
+            setDebugInfo(prev => prev + `\n❌ Parse error: ${error.message}`);
             reject(error);
           }
         },
-        error: reject
+        error: (error) => {
+          console.error('❌ CSV read error:', error);
+          setDebugInfo(prev => prev + `\n❌ CSV error: ${error.message}`);
+          reject(error);
+        }
       });
     });
   };
@@ -95,15 +154,38 @@ const ICTMultiTFBacktester = () => {
     if (!file) return;
     
     setLoading(true);
+    setDebugInfo(`📂 Loading ${tf.toUpperCase()} file: ${file.name}...`);
+    
     try {
-      const isDaily = tf === 'daily';
-      const parsedData = await parseCSV(file, isDaily);
-      console.log(`${tf.toUpperCase()}: Loaded ${parsedData.length} bars`);
-      setTimeframes(prev => ({ ...prev, [tf]: parsedData }));
-      setLoading(false);
+      // Read first few lines to check format
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const text = e.target.result;
+        const firstLines = text.split('\n').slice(0, 5);
+        console.log('=== FILE FORMAT CHECK ===');
+        console.log('First 5 lines:');
+        firstLines.forEach((line, i) => console.log(`Line ${i}: "${line}"`));
+        console.log('========================');
+        
+        // Now parse the full file
+        const isDaily = tf === 'daily';
+        const parsedData = await parseCSV(file, isDaily);
+        
+        if (parsedData.length === 0) {
+          setDebugInfo(prev => prev + `\n❌ ${tf.toUpperCase()}: No valid data parsed! Check CSV format.`);
+        } else {
+          console.log(`${tf.toUpperCase()}: Loaded ${parsedData.length} bars`);
+          console.log('First candle:', parsedData[0]);
+          console.log('Last candle:', parsedData[parsedData.length - 1]);
+          setTimeframes(prev => ({ ...prev, [tf]: parsedData }));
+        }
+        
+        setLoading(false);
+      };
+      reader.readAsText(file);
     } catch (error) {
       console.error(`Error parsing ${tf}:`, error);
-      alert(`Error loading ${tf} file. Check console for details.`);
+      setDebugInfo(prev => prev + `\n❌ ${tf.toUpperCase()}: ${error.message}`);
       setLoading(false);
     }
   };
@@ -565,6 +647,14 @@ const ICTMultiTFBacktester = () => {
             <Upload size={20} />
             Upload Timeframes ({filesLoaded}/5)
           </h2>
+          
+          {/* Debug Console */}
+          {debugInfo && (
+            <div className="mb-4 p-3 bg-slate-900 rounded border border-slate-700">
+              <p className="text-xs text-green-400 font-mono whitespace-pre-wrap">{debugInfo}</p>
+            </div>
+          )}
+          
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
             {[
               { key: 'm1', label: 'M1 (Optional)', color: 'purple', required: false },
