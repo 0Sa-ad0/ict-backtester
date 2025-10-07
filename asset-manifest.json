@@ -1,0 +1,15 @@
+{
+  "files": {
+    "main.css": "/ict-backtester/static/css/main.92c8d4eb.css",
+    "main.js": "/ict-backtester/static/js/main.61481335.js",
+    "static/js/453.e2256065.chunk.js": "/ict-backtester/static/js/453.e2256065.chunk.js",
+    "index.html": "/ict-backtester/index.html",
+    "main.92c8d4eb.css.map": "/ict-backtester/static/css/main.92c8d4eb.css.map",
+    "main.61481335.js.map": "/ict-backtester/static/js/main.61481335.js.map",
+    "453.e2256065.chunk.js.map": "/ict-backtester/static/js/453.e2256065.chunk.js.map"
+  },
+  "entrypoints": [
+    "static/css/main.92c8d4eb.css",
+    "static/js/main.61481335.js"
+  ]
+}
