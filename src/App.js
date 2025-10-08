@@ -1,44 +1,36 @@
 import React, { useState } from 'react';
-import { Play, TrendingUp, Award, Bell, Target, BarChart3, Zap, AlertTriangle } from 'lucide-react';
+import { Play, TrendingUp, Award, Bell, Target, BarChart3, Zap, AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
 import Papa from 'papaparse';
 
 const CompleteTradingSystem = () => {
   const [files, setFiles] = useState({ m5: null, h1: null, h4: null, daily: null });
-  const [mode, setMode] = useState('backtest'); // 'backtest', 'optimize', 'live'
+  const [mode, setMode] = useState('backtest');
   const [strategy, setStrategy] = useState('combined');
   const [optimizing, setOptimizing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [results, setResults] = useState(null);
   const [liveSignals, setLiveSignals] = useState([]);
   const [forwardTest, setForwardTest] = useState(null);
+  const [backtestResult, setBacktestResult] = useState(null);
+  const [loading, setLoading] = useState(false);
   
   const [settings, setSettings] = useState({
-    // Price Action
     strongBodyMin: 0.5,
     lookbackPeriod: 20,
     wickMinPercent: 0.6,
-    
-    // ICT
     minConfluence: 2.0,
     fvgMinPips: 10,
-    
-    // Risk Management
     stopLossPips: 15,
     riskRewardRatio: 2,
     useTrailingStop: true,
     trailingStopPips: 15,
-    
-    // Filters
     useKillZones: false,
     maxTradesPerDay: 5,
-    
-    // Testing
     forwardTestDays: 30,
-    optimizeFrom: 70, // Use 70% for optimization
-    optimizeTo: 100   // Test on last 30%
+    optimizeFrom: 70,
+    optimizeTo: 100
   });
 
-  // CSV Parser
   const parseCSV = (file, isDaily = false) => {
     return new Promise((resolve, reject) => {
       Papa.parse(file, {
@@ -116,7 +108,6 @@ const CompleteTradingSystem = () => {
     setFiles(prev => ({ ...prev, [tf]: data }));
   };
 
-  // PRICE ACTION DETECTION
   const detectPriceAction = (data, params) => {
     const signals = [];
     const { strongBodyMin, lookbackPeriod, wickMinPercent } = params;
@@ -130,22 +121,16 @@ const CompleteTradingSystem = () => {
       const isGreen = c.close > c.open;
       const isRed = c.close < c.open;
       
-      // Recent high/low
       const recentHigh = Math.max(...data.slice(i - lookbackPeriod, i).map(d => d.high));
       const recentLow = Math.min(...data.slice(i - lookbackPeriod, i).map(d => d.low));
-      
-      // Momentum (last 3 candles)
       const momentum = i >= 3 ? c.close - data[i - 3].close : 0;
       
-      // SETUP 1: MOMENTUM (Strong candle with trend)
       const momentumLong = isGreen && bodyPercent >= strongBodyMin && momentum > 0;
       const momentumShort = isRed && bodyPercent >= strongBodyMin && momentum < 0;
       
-      // SETUP 2: BREAKOUT
       const breakoutLong = isGreen && bodyPercent >= strongBodyMin && c.high > recentHigh;
       const breakoutShort = isRed && bodyPercent >= strongBodyMin && c.low < recentLow;
       
-      // SETUP 3: REJECTION (Wick)
       const lowerWick = Math.min(c.open, c.close) - c.low;
       const upperWick = c.high - Math.max(c.open, c.close);
       const lowerWickPct = range > 0 ? lowerWick / range : 0;
@@ -154,7 +139,6 @@ const CompleteTradingSystem = () => {
       const rejectionLong = isGreen && lowerWickPct >= wickMinPercent && c.low <= recentLow * 1.001;
       const rejectionShort = isRed && upperWickPct >= wickMinPercent && c.high >= recentHigh * 0.999;
       
-      // Combine
       if (momentumLong || breakoutLong || rejectionLong) {
         signals.push({
           index: i,
@@ -181,7 +165,6 @@ const CompleteTradingSystem = () => {
     return signals;
   };
 
-  // ICT FUNCTIONS
   const findOrderBlocks = (data, lookback = 20) => {
     const obs = [];
     for (let i = lookback; i < data.length - 1; i++) {
@@ -236,7 +219,6 @@ const CompleteTradingSystem = () => {
     let score = 0;
     const tolerance = 0.002;
     
-    // H4 Order Block
     const nearOB = h4OBs.filter(ob => 
       ob.type === signal.type && 
       signal.price >= ob.low - tolerance && 
@@ -244,7 +226,6 @@ const CompleteTradingSystem = () => {
     );
     score += nearOB.length * 1.5;
     
-    // H1 FVG
     const nearFVG = h1FVGs.filter(fvg => 
       fvg.type === signal.type && 
       signal.price >= fvg.bottom - tolerance && 
@@ -255,12 +236,10 @@ const CompleteTradingSystem = () => {
     return score;
   };
 
-  // BACKTESTING ENGINE
   const runBacktest = (params, isForward = false) => {
     const data = files.m5;
     if (!data || data.length < 200) return null;
     
-    // Split data for forward testing
     const splitIdx = Math.floor(data.length * (params.optimizeFrom / 100));
     const testData = isForward ? data.slice(splitIdx) : data.slice(0, splitIdx);
     
@@ -270,17 +249,14 @@ const CompleteTradingSystem = () => {
     let peak = 10000;
     let maxDD = 0;
     
-    // Get ICT elements if combined
     let h4OBs = [], h1FVGs = [];
     if (strategy === 'combined' && files.h4 && files.h1) {
       h4OBs = findOrderBlocks(files.h4, 20);
       h1FVGs = findFVG(files.h1, params.fvgMinPips);
     }
     
-    // Get signals
     let signals = detectPriceAction(testData, params);
     
-    // Filter with ICT confluence
     if (strategy === 'combined') {
       signals = signals.map(sig => ({
         ...sig,
@@ -288,7 +264,6 @@ const CompleteTradingSystem = () => {
       })).filter(sig => sig.confluence >= params.minConfluence);
     }
     
-    // Execute trades
     let tradesThisDay = 0;
     let lastDate = '';
     
@@ -303,14 +278,12 @@ const CompleteTradingSystem = () => {
       
       if (tradesThisDay >= params.maxTradesPerDay) continue;
       
-      // Kill zone filter
       if (params.useKillZones) {
         const hour = candle.timestamp.getUTCHours();
         if (!((hour >= 7 && hour < 10) || (hour >= 12 && hour < 15))) continue;
       }
       
       const entry = signal.price;
-      const riskAmount = balance * 0.02;
       let outcome = 'none';
       let exitPrice = entry;
       let exitReason = '';
@@ -323,7 +296,6 @@ const CompleteTradingSystem = () => {
         for (let j = signal.index + 1; j < Math.min(signal.index + 100, testData.length); j++) {
           const c = testData[j];
           
-          // Trailing stop
           if (params.useTrailingStop) {
             const newSL = c.close - (params.trailingStopPips * 0.0001);
             if (newSL > sl) sl = newSL;
@@ -432,7 +404,6 @@ const CompleteTradingSystem = () => {
     };
   };
 
-  // AUTO OPTIMIZER
   const runOptimization = async () => {
     if (!files.m5) {
       alert('Upload M5 data first!');
@@ -448,15 +419,14 @@ const CompleteTradingSystem = () => {
       strongBodyMin: [0.4, 0.5, 0.6, 0.7],
       lookbackPeriod: [15, 20, 25],
       wickMinPercent: [0.5, 0.6, 0.7],
-      minConfluence: [1.5, 2.0, 2.5, 3.0, 3.5],
+      minConfluence: [1.5, 2.0, 2.5, 3.0],
       fvgMinPips: [8, 10, 12, 15],
-      stopLossPips: [15, 20, 25, 30],
-      riskRewardRatio: [2, 2.5, 3, 3.5, 4],
+      stopLossPips: [15, 20, 25],
+      riskRewardRatio: [2, 2.5, 3],
       useKillZones: [true, false],
       maxTradesPerDay: [3, 5, 7]
     };
     
-    // Generate combinations (smart sampling to avoid explosion)
     for (const strongBody of ranges.strongBodyMin) {
       for (const lookback of ranges.lookbackPeriod) {
         for (const wick of ranges.wickMinPercent) {
@@ -491,8 +461,6 @@ const CompleteTradingSystem = () => {
       }
     }
     
-    console.log(`Testing ${combos.length} combinations...`);
-    
     const allResults = [];
     for (let i = 0; i < combos.length; i++) {
       const result = runBacktest(combos[i], false);
@@ -516,7 +484,6 @@ const CompleteTradingSystem = () => {
     setOptimizing(false);
   };
 
-  // FORWARD TEST (Reverse Backtest)
   const runForwardTest = () => {
     if (!files.m5) {
       alert('Upload M5 data!');
@@ -527,7 +494,6 @@ const CompleteTradingSystem = () => {
     setForwardTest(result);
   };
 
-  // LIVE SIGNAL GENERATION
   const generateLiveSignals = () => {
     if (!files.m5) return;
     
@@ -549,7 +515,6 @@ const CompleteTradingSystem = () => {
       })).filter(sig => sig.confluence >= settings.minConfluence);
     }
     
-    // Get last 10 signals
     const recentSignals = signals.slice(-10).map(sig => {
       const entry = sig.price;
       const sl = sig.type === 'long' 
@@ -575,27 +540,99 @@ const CompleteTradingSystem = () => {
   };
 
   const filesLoaded = Object.values(files).filter(f => f !== null).length;
+  
+  const checkResults = (metrics) => {
+    const redFlags = [];
+    const greenFlags = [];
+    
+    if (parseFloat(metrics.winRate) > 70) redFlags.push("Win rate >70% (overfitting risk)");
+    else if (parseFloat(metrics.winRate) >= 40) greenFlags.push("Win rate in healthy range (40-70%)");
+    else redFlags.push("Win rate <40% (too low)");
+    
+    if (parseFloat(metrics.profitFactor) < 1.5) redFlags.push("Profit Factor <1.5 (weak edge)");
+    else greenFlags.push("Profit Factor ≥1.5 (good edge)");
+    
+    if (parseFloat(metrics.maxDrawdown) > 30) redFlags.push("Max Drawdown >30% (too risky)");
+    else greenFlags.push("Max Drawdown ≤30% (acceptable risk)");
+    
+    if (metrics.totalTrades < 50) redFlags.push("Less than 50 trades (not enough data)");
+    else greenFlags.push("Sufficient trade sample");
+    
+    if (parseFloat(metrics.expectancy) < 0) redFlags.push("Negative expectancy (mathematical loser)");
+    else greenFlags.push("Positive expectancy");
+    
+    return { redFlags, greenFlags, passed: redFlags.length === 0 };
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-purple-900 p-4">
       <div className="max-w-7xl mx-auto">
-        {/* Header */}
         <div className="text-center mb-6">
           <h1 className="text-5xl font-bold text-white mb-2 flex items-center justify-center gap-3">
             <Zap className="text-yellow-400" size={48} />
             Complete Trading System
           </h1>
-          <p className="text-slate-300 text-lg">Price Action + ICT + Auto-Optimizer + Live Signals</p>
+          <p className="text-slate-300 text-lg">4-Phase Mathematical Validation</p>
+        </div>
+
+        {/* Progress Tracker */}
+        <div className="bg-slate-800 rounded-lg p-6 mb-6 border border-purple-500/30">
+          <h2 className="text-xl font-bold text-white mb-4">📍 Testing Progress</h2>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className={`p-4 rounded-lg border-2 ${files.m5 ? 'border-green-500 bg-green-900/20' : 'border-slate-600'}`}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-2xl">{files.m5 ? '✅' : '⭕'}</span>
+                <div>
+                  <h3 className="text-white font-bold text-sm">Step 1: Upload Data</h3>
+                  <p className="text-slate-400 text-xs">M5 CSV Required</p>
+                </div>
+              </div>
+              {files.m5 && <p className="text-green-400 text-xs">{files.m5.length.toLocaleString()} candles loaded</p>}
+            </div>
+            
+            <div className={`p-4 rounded-lg border-2 ${backtestResult ? 'border-green-500 bg-green-900/20' : 'border-slate-600'}`}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-2xl">{backtestResult ? '✅' : '⭕'}</span>
+                <div>
+                  <h3 className="text-white font-bold text-sm">Step 2: Backtest</h3>
+                  <p className="text-slate-400 text-xs">Test on 70% data</p>
+                </div>
+              </div>
+              {backtestResult && <p className="text-green-400 text-xs">PF: {backtestResult.metrics.profitFactor}</p>}
+            </div>
+            
+            <div className={`p-4 rounded-lg border-2 ${results ? 'border-green-500 bg-green-900/20' : 'border-slate-600'}`}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-2xl">{results ? '✅' : '⭕'}</span>
+                <div>
+                  <h3 className="text-white font-bold text-sm">Step 3: Optimize</h3>
+                  <p className="text-slate-400 text-xs">Find best params</p>
+                </div>
+              </div>
+              {results && <p className="text-green-400 text-xs">Top: {results[0].returnPct}%</p>}
+            </div>
+            
+            <div className={`p-4 rounded-lg border-2 ${forwardTest ? 'border-green-500 bg-green-900/20' : 'border-slate-600'}`}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-2xl">{forwardTest ? '✅' : '⭕'}</span>
+                <div>
+                  <h3 className="text-white font-bold text-sm">Step 4: Forward Test</h3>
+                  <p className="text-slate-400 text-xs">Validate on 30%</p>
+                </div>
+              </div>
+              {forwardTest && <p className="text-green-400 text-xs">WR: {forwardTest.metrics.winRate}%</p>}
+            </div>
+          </div>
         </div>
 
         {/* File Upload */}
         <div className="bg-slate-800 rounded-lg p-6 mb-6 border border-purple-500/30">
-          <h2 className="text-xl font-bold text-white mb-4">📂 Upload Data ({filesLoaded}/4 Required)</h2>
+          <h2 className="text-xl font-bold text-white mb-4">📂 Step 1: Upload Data ({filesLoaded}/4)</h2>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {['m5', 'h1', 'h4', 'daily'].map(tf => (
               <div key={tf}>
-                <label className={`block bg-gradient-to-r ${tf === 'm5' ? 'from-green-600 to-green-700' : tf === 'h1' ? 'from-blue-600 to-blue-700' : tf === 'h4' ? 'from-orange-600 to-orange-700' : 'from-red-600 to-red-700'} hover:opacity-90 text-white px-4 py-3 rounded-lg cursor-pointer transition text-center font-bold`}>
-                  {tf.toUpperCase()} {tf === 'm5' ? '(Required)*' : '(Optional)'}
+                <label className={`block bg-gradient-to-r ${tf === 'm5' ? 'from-green-600 to-green-700' : 'from-blue-600 to-blue-700'} hover:opacity-90 text-white px-4 py-3 rounded-lg cursor-pointer transition text-center font-bold`}>
+                  {tf.toUpperCase()} {tf === 'm5' ? '(REQUIRED)' : '(Optional)'}
                   <input type="file" accept=".csv" onChange={(e) => handleFileUpload(e, tf)} className="hidden" />
                 </label>
                 {files[tf] && (
@@ -606,86 +643,65 @@ const CompleteTradingSystem = () => {
               </div>
             ))}
           </div>
+          {!files.m5 && (
+            <div className="mt-4 p-3 bg-yellow-900/30 border border-yellow-500 rounded text-center">
+              <p className="text-yellow-300 text-sm font-bold">⚠️ M5 data is REQUIRED to start testing</p>
+            </div>
+          )}
         </div>
 
         {/* Mode Selection */}
         <div className="bg-slate-800 rounded-lg p-6 mb-6 border border-slate-700">
-          <h2 className="text-xl font-bold text-white mb-4">🎯 Select Mode</h2>
+          <h2 className="text-xl font-bold text-white mb-4">🎯 Select Testing Mode</h2>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <button
               onClick={() => setMode('backtest')}
-              className={`p-4 rounded-lg border-2 transition ${mode === 'backtest' ? 'border-green-500 bg-green-900/30' : 'border-slate-600 hover:border-green-500/50'}`}
+              disabled={!files.m5}
+              className={`p-4 rounded-lg border-2 transition ${mode === 'backtest' ? 'border-green-500 bg-green-900/30' : 'border-slate-600 hover:border-green-500/50'} ${!files.m5 ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <BarChart3 className="mx-auto mb-2 text-green-400" size={32} />
               <h3 className="text-white font-bold">Backtest</h3>
-              <p className="text-slate-400 text-sm mt-1">Test on historical data</p>
+              <p className="text-slate-400 text-sm mt-1">Test on 70% historical</p>
             </button>
             
             <button
               onClick={() => setMode('optimize')}
-              className={`p-4 rounded-lg border-2 transition ${mode === 'optimize' ? 'border-purple-500 bg-purple-900/30' : 'border-slate-600 hover:border-purple-500/50'}`}
+              disabled={!files.m5}
+              className={`p-4 rounded-lg border-2 transition ${mode === 'optimize' ? 'border-purple-500 bg-purple-900/30' : 'border-slate-600 hover:border-purple-500/50'} ${!files.m5 ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <Zap className="mx-auto mb-2 text-purple-400" size={32} />
               <h3 className="text-white font-bold">Auto-Optimize</h3>
-              <p className="text-slate-400 text-sm mt-1">Find best parameters</p>
+              <p className="text-slate-400 text-sm mt-1">Find best settings</p>
             </button>
             
             <button
               onClick={() => setMode('forward')}
-              className={`p-4 rounded-lg border-2 transition ${mode === 'forward' ? 'border-blue-500 bg-blue-900/30' : 'border-slate-600 hover:border-blue-500/50'}`}
+              disabled={!files.m5}
+              className={`p-4 rounded-lg border-2 transition ${mode === 'forward' ? 'border-blue-500 bg-blue-900/30' : 'border-slate-600 hover:border-blue-500/50'} ${!files.m5 ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <Target className="mx-auto mb-2 text-blue-400" size={32} />
               <h3 className="text-white font-bold">Forward Test</h3>
-              <p className="text-slate-400 text-sm mt-1">Test on unseen data</p>
+              <p className="text-slate-400 text-sm mt-1">Validate on 30%</p>
             </button>
             
             <button
               onClick={() => setMode('live')}
-              className={`p-4 rounded-lg border-2 transition ${mode === 'live' ? 'border-yellow-500 bg-yellow-900/30' : 'border-slate-600 hover:border-yellow-500/50'}`}
+              disabled={!files.m5}
+              className={`p-4 rounded-lg border-2 transition ${mode === 'live' ? 'border-yellow-500 bg-yellow-900/30' : 'border-slate-600 hover:border-yellow-500/50'} ${!files.m5 ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <Bell className="mx-auto mb-2 text-yellow-400" size={32} />
               <h3 className="text-white font-bold">Live Signals</h3>
-              <p className="text-slate-400 text-sm mt-1">Get exact entry alerts</p>
+              <p className="text-slate-400 text-sm mt-1">Get trade alerts</p>
             </button>
           </div>
         </div>
 
-        {/* Strategy Selection */}
-        <div className="bg-slate-800 rounded-lg p-6 mb-6 border border-slate-700">
-          <h2 className="text-xl font-bold text-white mb-4">⚙️ Strategy Type</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <button
-              onClick={() => setStrategy('priceaction')}
-              className={`p-4 rounded-lg border-2 transition ${strategy === 'priceaction' ? 'border-green-500 bg-green-900/30' : 'border-slate-600'}`}
-            >
-              <h3 className="text-white font-bold">💪 Price Action Only</h3>
-              <p className="text-slate-400 text-sm">Momentum + Breakout + Rejection</p>
-            </button>
-            
-            <button
-              onClick={() => setStrategy('ict')}
-              className={`p-4 rounded-lg border-2 transition ${strategy === 'ict' ? 'border-blue-500 bg-blue-900/30' : 'border-slate-600'}`}
-            >
-              <h3 className="text-white font-bold">📊 ICT Only</h3>
-              <p className="text-slate-400 text-sm">Order Blocks + FVG + Confluence</p>
-            </button>
-            
-            <button
-              onClick={() => setStrategy('combined')}
-              className={`p-4 rounded-lg border-2 transition ${strategy === 'combined' ? 'border-purple-500 bg-purple-900/30' : 'border-slate-600'}`}
-            >
-              <h3 className="text-white font-bold">🔥 Combined (Best)</h3>
-              <p className="text-slate-400 text-sm">Price Action + ICT Confluence</p>
-            </button>
-          </div>
-        </div>
-
-        {/* Settings Panel */}
+        {/* Parameters */}
         <div className="bg-slate-800 rounded-lg p-6 mb-6 border border-slate-700">
           <h2 className="text-xl font-bold text-white mb-4">⚙️ Parameters</h2>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <div>
-              <label className="text-sm text-slate-400">Strong Body Min %</label>
+              <label className="text-sm text-slate-400">Strong Body %</label>
               <input
                 type="number"
                 step="0.1"
@@ -695,7 +711,7 @@ const CompleteTradingSystem = () => {
               />
             </div>
             <div>
-              <label className="text-sm text-slate-400">Lookback Period</label>
+              <label className="text-sm text-slate-400">Lookback</label>
               <input
                 type="number"
                 value={settings.lookbackPeriod}
@@ -759,48 +775,69 @@ const CompleteTradingSystem = () => {
 
         {/* Action Buttons */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          {mode === 'backtest' && (
-            <button
-              onClick={() => {
-                const result = runBacktest(settings, false);
-                setResults(result ? [result] : null);
-              }}
-              disabled={!files.m5}
-              className="bg-green-600 hover:bg-green-700 disabled:bg-slate-600 text-white px-6 py-4 rounded-lg font-bold text-lg"
-            >
-              📊 Run Backtest
-            </button>
-          )}
+          <button
+            onClick={async () => {
+              setLoading(true);
+              await new Promise(r => setTimeout(r, 100)); // Small delay for UI update
+              const result = runBacktest(settings, false);
+              setBacktestResult(result);
+              setLoading(false);
+              
+              // Scroll to results
+              setTimeout(() => {
+                const resultsEl = document.querySelector('.backtest-results');
+                if (resultsEl) resultsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }, 100);
+            }}
+            disabled={!files.m5 || mode !== 'backtest' || loading}
+            className="bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-4 rounded-lg font-bold text-lg transition"
+          >
+            {loading && mode === 'backtest' ? '⏳ Running...' : '📊 Run Backtest'}
+          </button>
           
-          {mode === 'optimize' && (
-            <button
-              onClick={runOptimization}
-              disabled={!files.m5 || optimizing}
-              className="bg-purple-600 hover:bg-purple-700 disabled:bg-slate-600 text-white px-6 py-4 rounded-lg font-bold text-lg"
-            >
-              {optimizing ? `⏳ ${progress.toFixed(0)}%` : '⚡ Auto-Optimize'}
-            </button>
-          )}
+          <button
+            onClick={runOptimization}
+            disabled={!files.m5 || optimizing || mode !== 'optimize'}
+            className="bg-purple-600 hover:bg-purple-700 disabled:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-4 rounded-lg font-bold text-lg transition"
+          >
+            {optimizing ? `⏳ ${progress.toFixed(0)}%` : '⚡ Auto-Optimize'}
+          </button>
           
-          {mode === 'forward' && (
-            <button
-              onClick={runForwardTest}
-              disabled={!files.m5}
-              className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 text-white px-6 py-4 rounded-lg font-bold text-lg"
-            >
-              🎯 Forward Test
-            </button>
-          )}
+          <button
+            onClick={async () => {
+              setLoading(true);
+              await new Promise(r => setTimeout(r, 100));
+              runForwardTest();
+              setLoading(false);
+              
+              setTimeout(() => {
+                const resultsEl = document.querySelector('.forward-results');
+                if (resultsEl) resultsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }, 100);
+            }}
+            disabled={!files.m5 || mode !== 'forward' || loading}
+            className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-4 rounded-lg font-bold text-lg transition"
+          >
+            {loading && mode === 'forward' ? '⏳ Running...' : '🎯 Forward Test'}
+          </button>
           
-          {mode === 'live' && (
-            <button
-              onClick={generateLiveSignals}
-              disabled={!files.m5}
-              className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-slate-600 text-white px-6 py-4 rounded-lg font-bold text-lg"
-            >
-              🔔 Generate Signals
-            </button>
-          )}
+          <button
+            onClick={async () => {
+              setLoading(true);
+              await new Promise(r => setTimeout(r, 100));
+              generateLiveSignals();
+              setLoading(false);
+              
+              setTimeout(() => {
+                const resultsEl = document.querySelector('.live-signals');
+                if (resultsEl) resultsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }, 100);
+            }}
+            disabled={!files.m5 || mode !== 'live' || loading}
+            className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-4 rounded-lg font-bold text-lg transition"
+          >
+            {loading && mode === 'live' ? '⏳ Running...' : '🔔 Generate Signals'}
+          </button>
         </div>
 
         {optimizing && (
@@ -816,13 +853,270 @@ const CompleteTradingSystem = () => {
           </div>
         )}
 
-        {/* LIVE SIGNALS MODE */}
+        {/* BACKTEST RESULTS */}
+        {mode === 'backtest' && backtestResult && (() => {
+          const check = checkResults(backtestResult.metrics);
+          return (
+            <div className="backtest-results bg-slate-800 rounded-lg p-6 mb-6 border border-green-500">
+              <h2 className="text-2xl font-bold text-white mb-4">📊 Backtest Results (70% Historical Data)</h2>
+              
+              {check.redFlags.length > 0 && (
+                <div className="mb-4 p-4 bg-red-900/30 border-2 border-red-500 rounded-lg">
+                  <h3 className="text-red-400 font-bold text-lg mb-2 flex items-center gap-2">
+                    <XCircle size={24} /> RED FLAGS - STRATEGY FAILED
+                  </h3>
+                  <ul className="space-y-1 text-sm text-red-300 mb-3">
+                    {check.redFlags.map((flag, i) => <li key={i}>❌ {flag}</li>)}
+                  </ul>
+                  <p className="text-red-200 text-sm font-bold bg-red-900/50 p-3 rounded">
+                    ⛔ DO NOT PROCEED - Strategy has no edge. Don't waste time optimizing.
+                  </p>
+                </div>
+              )}
+              
+              {check.passed && (
+                <div className="mb-4 p-4 bg-green-900/30 border-2 border-green-500 rounded-lg">
+                  <h3 className="text-green-400 font-bold text-lg mb-2 flex items-center gap-2">
+                    <CheckCircle size={24} /> ALL CHECKS PASSED
+                  </h3>
+                  <ul className="space-y-1 text-sm text-green-300 mb-3">
+                    {check.greenFlags.map((flag, i) => <li key={i}>✅ {flag}</li>)}
+                  </ul>
+                  <p className="text-green-200 text-sm font-bold bg-green-900/50 p-3 rounded">
+                    ✅ PROCEED TO OPTIMIZATION - Strategy shows basic edge on historical data
+                  </p>
+                </div>
+              )}
+              
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+                <div className="bg-gradient-to-br from-green-600 to-green-700 rounded-lg p-4">
+                  <p className="text-green-100 text-sm mb-1">Net Profit</p>
+                  <p className="text-white text-2xl font-bold">${backtestResult.metrics.netProfit}</p>
+                  <p className="text-green-100 text-xs">{backtestResult.metrics.returnPct}%</p>
+                </div>
+                <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg p-4">
+                  <p className="text-blue-100 text-sm mb-1">Win Rate</p>
+                  <p className="text-white text-2xl font-bold">{backtestResult.metrics.winRate}%</p>
+                  <p className="text-blue-100 text-xs">{backtestResult.metrics.wins}W/{backtestResult.metrics.losses}L</p>
+                </div>
+                <div className="bg-gradient-to-br from-purple-600 to-purple-700 rounded-lg p-4">
+                  <p className="text-purple-100 text-sm mb-1">Profit Factor</p>
+                  <p className="text-white text-2xl font-bold">{backtestResult.metrics.profitFactor}</p>
+                  <p className="text-purple-100 text-xs">{backtestResult.metrics.totalTrades} trades</p>
+                </div>
+                <div className="bg-gradient-to-br from-orange-600 to-orange-700 rounded-lg p-4">
+                  <p className="text-orange-100 text-sm mb-1">Max DD</p>
+                  <p className="text-white text-2xl font-bold">{backtestResult.metrics.maxDrawdown}%</p>
+                </div>
+                <div className="bg-gradient-to-br from-pink-600 to-pink-700 rounded-lg p-4">
+                  <p className="text-pink-100 text-sm mb-1">Expectancy</p>
+                  <p className="text-white text-2xl font-bold">${backtestResult.metrics.expectancy}</p>
+                </div>
+              </div>
+              
+              {check.passed && (
+                <div className="mt-4 p-4 bg-blue-900/30 border border-blue-500 rounded-lg text-center">
+                  <p className="text-blue-300 font-bold mb-2">📍 NEXT STEP</p>
+                  <p className="text-white text-sm">Click "Auto-Optimize" mode → Find best parameter combination</p>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* OPTIMIZATION RESULTS */}
+        {mode === 'optimize' && results && results.length > 0 && (
+          <div className="bg-slate-800 rounded-lg p-6 mb-6 border border-purple-500">
+            <h2 className="text-2xl font-bold text-white mb-4">🏆 Top 20 Optimized Results</h2>
+            
+            <div className="mb-6 p-4 bg-gradient-to-r from-yellow-900/30 to-orange-900/30 border border-yellow-500/50 rounded-lg">
+              <h3 className="text-xl font-bold text-yellow-400 mb-3">🥇 #1 Best Settings</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
+                <div>
+                  <p className="text-slate-400">Return</p>
+                  <p className="text-white font-bold text-xl">{results[0].returnPct}%</p>
+                </div>
+                <div>
+                  <p className="text-slate-400">Win Rate</p>
+                  <p className="text-white font-bold text-xl">{results[0].winRate}%</p>
+                </div>
+                <div>
+                  <p className="text-slate-400">Profit Factor</p>
+                  <p className="text-white font-bold text-xl">{results[0].profitFactor}</p>
+                </div>
+                <div>
+                  <p className="text-slate-400">Trades</p>
+                  <p className="text-white font-bold text-xl">{results[0].totalTrades}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs bg-slate-900/50 p-3 rounded">
+                <div><span className="text-slate-400">SL:</span> <span className="text-white font-bold">{results[0].params.stopLossPips} pips</span></div>
+                <div><span className="text-slate-400">R:R:</span> <span className="text-white font-bold">1:{results[0].params.riskRewardRatio}</span></div>
+                <div><span className="text-slate-400">Body%:</span> <span className="text-white font-bold">{(results[0].params.strongBodyMin * 100).toFixed(0)}%</span></div>
+                <div><span className="text-slate-400">Confluence:</span> <span className="text-white font-bold">{results[0].params.minConfluence}</span></div>
+              </div>
+              <button
+                onClick={() => setSettings(results[0].params)}
+                className="mt-4 w-full bg-yellow-600 hover:bg-yellow-700 text-black font-bold py-3 rounded-lg"
+              >
+                ⚡ USE THESE SETTINGS
+              </button>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-slate-400 border-b border-slate-700">
+                    <th className="pb-3 text-left">Rank</th>
+                    <th className="pb-3 text-left">Return%</th>
+                    <th className="pb-3 text-left">Win%</th>
+                    <th className="pb-3 text-left">PF</th>
+                    <th className="pb-3 text-left">Trades</th>
+                    <th className="pb-3 text-left">MaxDD</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.slice(0, 10).map((r, idx) => (
+                    <tr key={idx} className="border-b border-slate-700 hover:bg-slate-700/50">
+                      <td className="py-3">
+                        <span className={`px-2 py-1 rounded font-bold ${idx === 0 ? 'bg-yellow-500 text-black' : idx < 3 ? 'bg-slate-600 text-white' : 'text-slate-400'}`}>
+                          #{idx + 1}
+                        </span>
+                      </td>
+                      <td className="py-3 text-green-400 font-bold">{r.returnPct}%</td>
+                      <td className="py-3 text-blue-400">{r.winRate}%</td>
+                      <td className="py-3 text-purple-400">{r.profitFactor}</td>
+                      <td className="py-3 text-slate-300">{r.totalTrades}</td>
+                      <td className="py-3 text-orange-400">{r.maxDrawdown}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            
+            <div className="mt-4 p-4 bg-blue-900/30 border border-blue-500 rounded-lg text-center">
+              <p className="text-blue-300 font-bold mb-2">📍 NEXT STEP</p>
+              <p className="text-white text-sm">Click "Use These Settings" → Switch to "Forward Test" → Validate on unseen 30%</p>
+            </div>
+          </div>
+        )}
+
+        {/* FORWARD TEST RESULTS */}
+        {mode === 'forward' && forwardTest && (
+          <div className="forward-results bg-slate-800 rounded-lg p-6 mb-6 border border-blue-500">
+            <h2 className="text-2xl font-bold text-white mb-4">🎯 Forward Test (30% Unseen Data)</h2>
+            
+            {backtestResult && (() => {
+              const btWR = parseFloat(backtestResult.metrics.winRate);
+              const fwWR = parseFloat(forwardTest.metrics.winRate);
+              const wrDiff = Math.abs(btWR - fwWR);
+              const fwProfit = parseFloat(forwardTest.metrics.netProfit);
+              const fwPF = parseFloat(forwardTest.metrics.profitFactor);
+              
+              const passed = wrDiff <= 15 && fwProfit > 0 && fwPF >= 1.3;
+              
+              return (
+                <>
+                  {!passed && (
+                    <div className="mb-4 p-4 bg-red-900/30 border-2 border-red-500 rounded-lg">
+                      <h3 className="text-red-400 font-bold text-lg mb-2 flex items-center gap-2">
+                        <XCircle size={24} /> FORWARD TEST FAILED
+                      </h3>
+                      <ul className="space-y-1 text-sm text-red-300 mb-3">
+                        {wrDiff > 15 && <li>❌ Win rate changed by {wrDiff.toFixed(1)}% ({'>'}15% = doesn't generalize)</li>}
+                        {fwProfit <= 0 && <li>❌ Negative profit on new data</li>}
+                        {fwPF < 1.3 && <li>❌ Profit Factor too low ({fwPF.toFixed(2)})</li>}
+                      </ul>
+                      <p className="text-red-200 text-sm font-bold bg-red-900/50 p-3 rounded">
+                        ⛔ STRATEGY OVERFITTED - Works on past but not future. DO NOT TRADE.
+                      </p>
+                    </div>
+                  )}
+                  
+                  {passed && (
+                    <div className="mb-4 p-4 bg-green-900/30 border-2 border-green-500 rounded-lg">
+                      <h3 className="text-green-400 font-bold text-lg mb-2 flex items-center gap-2">
+                        <CheckCircle size={24} /> FORWARD TEST PASSED
+                      </h3>
+                      <ul className="space-y-1 text-sm text-green-300 mb-3">
+                        <li>✅ Win rate stable (BT: {btWR.toFixed(1)}% → FW: {fwWR.toFixed(1)}%)</li>
+                        <li>✅ Positive profit on unseen data (${fwProfit.toFixed(2)})</li>
+                        <li>✅ Good profit factor ({fwPF.toFixed(2)})</li>
+                      </ul>
+                      <p className="text-green-200 text-sm font-bold bg-green-900/50 p-3 rounded">
+                        ✅ STRATEGY VALIDATED - Ready for live signal generation!
+                      </p>
+                    </div>
+                  )}
+                  
+                  <div className="mb-4 p-3 bg-slate-900/50 rounded border border-blue-500/50">
+                    <h4 className="text-blue-400 font-bold text-sm mb-2">📊 Backtest vs Forward:</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-xs">
+                      <div>
+                        <p className="text-slate-400">Win Rate</p>
+                        <p className="text-white">{btWR.toFixed(1)}% → {fwWR.toFixed(1)}%</p>
+                        <p className={wrDiff <= 10 ? 'text-green-400' : wrDiff <= 15 ? 'text-yellow-400' : 'text-red-400'}>
+                          Δ {wrDiff.toFixed(1)}% {wrDiff <= 15 ? '✅' : '❌'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400">Profit</p>
+                        <p className="text-white">${backtestResult.metrics.netProfit} → ${forwardTest.metrics.netProfit}</p>
+                        <p className={fwProfit > 0 ? 'text-green-400' : 'text-red-400'}>
+                          {fwProfit > 0 ? '✅ Positive' : '❌ Negative'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-400">Profit Factor</p>
+                        <p className="text-white">{backtestResult.metrics.profitFactor} → {forwardTest.metrics.profitFactor}</p>
+                        <p className={fwPF >= 1.3 ? 'text-green-400' : 'text-red-400'}>
+                          {fwPF >= 1.3 ? '✅ Good' : '❌ Weak'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+            
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+              <div className="bg-gradient-to-br from-green-600 to-green-700 rounded-lg p-4">
+                <p className="text-green-100 text-sm mb-1">Net Profit</p>
+                <p className="text-white text-2xl font-bold">${forwardTest.metrics.netProfit}</p>
+                <p className="text-green-100 text-xs">{forwardTest.metrics.returnPct}%</p>
+              </div>
+              <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg p-4">
+                <p className="text-blue-100 text-sm mb-1">Win Rate</p>
+                <p className="text-white text-2xl font-bold">{forwardTest.metrics.winRate}%</p>
+                <p className="text-blue-100 text-xs">{forwardTest.metrics.wins}W/{forwardTest.metrics.losses}L</p>
+              </div>
+              <div className="bg-gradient-to-br from-purple-600 to-purple-700 rounded-lg p-4">
+                <p className="text-purple-100 text-sm mb-1">Profit Factor</p>
+                <p className="text-white text-2xl font-bold">{forwardTest.metrics.profitFactor}</p>
+              </div>
+              <div className="bg-gradient-to-br from-orange-600 to-orange-700 rounded-lg p-4">
+                <p className="text-orange-100 text-sm mb-1">Max DD</p>
+                <p className="text-white text-2xl font-bold">{forwardTest.metrics.maxDrawdown}%</p>
+              </div>
+              <div className="bg-gradient-to-br from-pink-600 to-pink-700 rounded-lg p-4">
+                <p className="text-pink-100 text-sm mb-1">Expectancy</p>
+                <p className="text-white text-2xl font-bold">${forwardTest.metrics.expectancy}</p>
+              </div>
+            </div>
+            
+            {backtestResult && parseFloat(forwardTest.metrics.netProfit) > 0 && (
+              <div className="mt-4 p-4 bg-blue-900/30 border border-blue-500 rounded-lg text-center">
+                <p className="text-blue-300 font-bold mb-2">📍 NEXT STEP</p>
+                <p className="text-white text-sm">Switch to "Live Signals" → Paper trade 20 signals → Go live with 0.01 lot</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* LIVE SIGNALS */}
         {mode === 'live' && liveSignals.length > 0 && (
-          <div className="bg-slate-800 rounded-lg p-6 mb-6 border border-yellow-500">
-            <h2 className="text-2xl font-bold text-white mb-4 flex items-center gap-2">
-              <Bell className="text-yellow-400" />
-              Live Trading Signals (Last 10)
-            </h2>
+          <div className="live-signals bg-slate-800 rounded-lg p-6 mb-6 border border-yellow-500">
+            <h2 className="text-2xl font-bold text-white mb-4">🔔 Live Trading Signals (Last 10)</h2>
             <div className="space-y-4">
               {liveSignals.map((sig, idx) => (
                 <div key={idx} className={`p-4 rounded-lg border-2 ${sig.type === 'long' ? 'border-green-500 bg-green-900/20' : 'border-red-500 bg-red-900/20'}`}>
@@ -856,26 +1150,6 @@ const CompleteTradingSystem = () => {
                       <p className="text-slate-500 text-xs">({sig.tpPips} pips)</p>
                     </div>
                   </div>
-                  <div className="mt-3 pt-3 border-t border-slate-600 grid grid-cols-3 gap-4 text-xs">
-                    <div>
-                      <span className="text-slate-400">Timeframe:</span>
-                      <span className="text-white ml-2 font-bold">{sig.timeframe}</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-400">Trailing Stop:</span>
-                      <span className="text-white ml-2 font-bold">{sig.trailingStop}</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-400">Body %:</span>
-                      <span className="text-white ml-2 font-bold">{sig.bodyPercent}%</span>
-                    </div>
-                    {sig.confluence > 0 && (
-                      <div>
-                        <span className="text-slate-400">Confluence:</span>
-                        <span className="text-purple-400 ml-2 font-bold">{sig.confluence.toFixed(1)}</span>
-                      </div>
-                    )}
-                  </div>
                   <div className="mt-3 p-3 bg-slate-900/50 rounded">
                     <p className="text-yellow-300 font-bold text-sm">⚡ EXACT ENTRY INSTRUCTIONS:</p>
                     <p className="text-white text-sm mt-1">
@@ -888,206 +1162,149 @@ const CompleteTradingSystem = () => {
                 </div>
               ))}
             </div>
-          </div>
-        )}
-
-        {/* FORWARD TEST RESULTS */}
-        {mode === 'forward' && forwardTest && (
-          <div className="bg-slate-800 rounded-lg p-6 mb-6 border border-blue-500">
-            <h2 className="text-2xl font-bold text-white mb-4">🎯 Forward Test Results (Unseen Data)</h2>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-              <div className="bg-gradient-to-br from-green-600 to-green-700 rounded-lg p-4">
-                <p className="text-green-100 text-sm mb-1">Net Profit</p>
-                <p className="text-white text-2xl font-bold">${forwardTest.metrics.netProfit}</p>
-                <p className="text-green-100 text-xs">{forwardTest.metrics.returnPct}%</p>
-              </div>
-              <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg p-4">
-                <p className="text-blue-100 text-sm mb-1">Win Rate</p>
-                <p className="text-white text-2xl font-bold">{forwardTest.metrics.winRate}%</p>
-                <p className="text-blue-100 text-xs">{forwardTest.metrics.wins}W/{forwardTest.metrics.losses}L</p>
-              </div>
-              <div className="bg-gradient-to-br from-purple-600 to-purple-700 rounded-lg p-4">
-                <p className="text-purple-100 text-sm mb-1">Profit Factor</p>
-                <p className="text-white text-2xl font-bold">{forwardTest.metrics.profitFactor}</p>
-                <p className="text-purple-100 text-xs">{forwardTest.metrics.totalTrades} trades</p>
-              </div>
-              <div className="bg-gradient-to-br from-orange-600 to-orange-700 rounded-lg p-4">
-                <p className="text-orange-100 text-sm mb-1">Max DD</p>
-                <p className="text-white text-2xl font-bold">{forwardTest.metrics.maxDrawdown}%</p>
-              </div>
-              <div className="bg-gradient-to-br from-pink-600 to-pink-700 rounded-lg p-4">
-                <p className="text-pink-100 text-sm mb-1">Expectancy</p>
-                <p className="text-white text-2xl font-bold">${forwardTest.metrics.expectancy}</p>
-              </div>
-            </div>
-            <div className="bg-yellow-900/30 border border-yellow-500/50 rounded-lg p-4">
-              <p className="text-yellow-300 font-bold">✅ Forward Test Validation</p>
-              <p className="text-slate-300 text-sm mt-2">
-                This test used the LAST 30% of your data that was NOT used during optimization. 
-                These results represent how the strategy performs on completely unseen data.
-              </p>
+            <div className="mt-6 p-4 bg-yellow-900/30 border border-yellow-500 rounded-lg">
+              <h3 className="text-yellow-400 font-bold mb-2">📝 Paper Trading Instructions:</h3>
+              <ol className="text-white text-sm space-y-2">
+                <li>1. Write down each signal in Excel/Notebook</li>
+                <li>2. Track what WOULD happen if you entered (don't enter real money yet)</li>
+                <li>3. After 20 paper trades, calculate your actual win rate</li>
+                <li>4. If win rate ≈ forward test (±10%) → Go live with 0.01 lot</li>
+                <li>5. If win rate &lt; forward test → Execution problem (slippage/timing)</li>
+              </ol>
             </div>
           </div>
         )}
 
-        {/* OPTIMIZATION RESULTS */}
-        {mode === 'optimize' && results && results.length > 0 && (
-          <div className="bg-slate-800 rounded-lg p-6 border border-purple-500">
-            <h2 className="text-2xl font-bold text-white mb-4 flex items-center gap-2">
-              <Award className="text-yellow-400" />
-              Top 20 Optimized Results
-            </h2>
-            
-            {/* Best Settings Highlight */}
-            <div className="mb-6 p-4 bg-gradient-to-r from-yellow-900/30 to-orange-900/30 border border-yellow-500/50 rounded-lg">
-              <h3 className="text-xl font-bold text-yellow-400 mb-3">🏆 #1 Best Settings</h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                <div>
-                  <p className="text-slate-400">Return</p>
-                  <p className="text-white font-bold text-xl">{results[0].returnPct}%</p>
-                </div>
-                <div>
-                  <p className="text-slate-400">Win Rate</p>
-                  <p className="text-white font-bold text-xl">{results[0].winRate}%</p>
-                </div>
-                <div>
-                  <p className="text-slate-400">Profit Factor</p>
-                  <p className="text-white font-bold text-xl">{results[0].profitFactor}</p>
-                </div>
-                <div>
-                  <p className="text-slate-400">Trades</p>
-                  <p className="text-white font-bold text-xl">{results[0].totalTrades}</p>
-                </div>
-              </div>
-              <div className="mt-4 pt-4 border-t border-yellow-500/30 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                <div><span className="text-slate-400">Strong Body:</span> <span className="text-white font-bold">{(results[0].params.strongBodyMin * 100).toFixed(0)}%</span></div>
-                <div><span className="text-slate-400">Lookback:</span> <span className="text-white font-bold">{results[0].params.lookbackPeriod}</span></div>
-                <div><span className="text-slate-400">SL:</span> <span className="text-white font-bold">{results[0].params.stopLossPips} pips</span></div>
-                <div><span className="text-slate-400">R:R:</span> <span className="text-white font-bold">1:{results[0].params.riskRewardRatio}</span></div>
-                <div><span className="text-slate-400">Confluence:</span> <span className="text-white font-bold">{results[0].params.minConfluence}</span></div>
-                <div><span className="text-slate-400">Kill Zones:</span> <span className="text-white font-bold">{results[0].params.useKillZones ? '✅' : '❌'}</span></div>
-                <div><span className="text-slate-400">Trailing:</span> <span className="text-white font-bold">{results[0].params.trailingStopPips} pips</span></div>
-                <div><span className="text-slate-400">Max/Day:</span> <span className="text-white font-bold">{results[0].params.maxTradesPerDay}</span></div>
-              </div>
-              <button
-                onClick={() => setSettings(results[0].params)}
-                className="mt-4 w-full bg-yellow-600 hover:bg-yellow-700 text-black font-bold py-2 rounded-lg"
-              >
-                ⚡ Use These Settings
-              </button>
-            </div>
-
-            {/* Results Table */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-slate-400 border-b border-slate-700">
-                    <th className="pb-3 text-left">Rank</th>
-                    <th className="pb-3 text-left">Return %</th>
-                    <th className="pb-3 text-left">Win Rate</th>
-                    <th className="pb-3 text-left">PF</th>
-                    <th className="pb-3 text-left">Trades</th>
-                    <th className="pb-3 text-left">Max DD</th>
-                    <th className="pb-3 text-left">SL</th>
-                    <th className="pb-3 text-left">R:R</th>
-                    <th className="pb-3 text-left">Conf</th>
-                    <th className="pb-3 text-left">KZ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {results.map((r, idx) => (
-                    <tr key={idx} className="border-b border-slate-700 hover:bg-slate-700/50">
-                      <td className="py-3">
-                        <span className={`px-2 py-1 rounded font-bold ${idx === 0 ? 'bg-yellow-500 text-black' : idx < 3 ? 'bg-slate-600 text-white' : 'text-slate-400'}`}>
-                          #{idx + 1}
-                        </span>
-                      </td>
-                      <td className="py-3 text-green-400 font-bold">{r.returnPct}%</td>
-                      <td className="py-3 text-blue-400">{r.winRate}%</td>
-                      <td className="py-3 text-purple-400">{r.profitFactor}</td>
-                      <td className="py-3 text-slate-300">{r.totalTrades}</td>
-                      <td className="py-3 text-orange-400">{r.maxDrawdown}%</td>
-                      <td className="py-3 text-slate-300">{r.params.stopLossPips}</td>
-                      <td className="py-3 text-slate-300">{r.params.riskRewardRatio}</td>
-                      <td className="py-3 text-slate-300">{r.params.minConfluence}</td>
-                      <td className="py-3">{r.params.useKillZones ? '✅' : '❌'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* BACKTEST RESULTS */}
-        {mode === 'backtest' && results && results.length > 0 && results[0].metrics && (
-          <div className="bg-slate-800 rounded-lg p-6 border border-green-500">
-            <h2 className="text-2xl font-bold text-white mb-4">📊 Backtest Results</h2>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div className="bg-gradient-to-br from-green-600 to-green-700 rounded-lg p-4">
-                <p className="text-green-100 text-sm mb-1">Net Profit</p>
-                <p className="text-white text-2xl font-bold">${results[0].metrics.netProfit}</p>
-                <p className="text-green-100 text-xs">{results[0].metrics.returnPct}%</p>
-              </div>
-              <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg p-4">
-                <p className="text-blue-100 text-sm mb-1">Win Rate</p>
-                <p className="text-white text-2xl font-bold">{results[0].metrics.winRate}%</p>
-                <p className="text-blue-100 text-xs">{results[0].metrics.wins}W/{results[0].metrics.losses}L</p>
-              </div>
-              <div className="bg-gradient-to-br from-purple-600 to-purple-700 rounded-lg p-4">
-                <p className="text-purple-100 text-sm mb-1">Profit Factor</p>
-                <p className="text-white text-2xl font-bold">{results[0].metrics.profitFactor}</p>
-              </div>
-              <div className="bg-gradient-to-br from-orange-600 to-orange-700 rounded-lg p-4">
-                <p className="text-orange-100 text-sm mb-1">Max DD</p>
-                <p className="text-white text-2xl font-bold">{results[0].metrics.maxDrawdown}%</p>
-              </div>
-              <div className="bg-gradient-to-br from-pink-600 to-pink-700 rounded-lg p-4">
-                <p className="text-pink-100 text-sm mb-1">Expectancy</p>
-                <p className="text-white text-2xl font-bold">${results[0].metrics.expectancy}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Info Panel */}
-        {!results && !liveSignals.length && !forwardTest && (
+        {/* Initial Info Panel */}
+        {!backtestResult && !results && !forwardTest && !liveSignals.length && (
           <div className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-lg p-8 border border-purple-500/30">
             <div className="text-center mb-6">
               <AlertTriangle size={56} className="mx-auto text-purple-400 mb-4" />
-              <h3 className="text-2xl font-bold text-white mb-2">🔥 Complete Trading System</h3>
-              <p className="text-slate-400">Mathematical Precision - No Theory - Just Results</p>
+              <h3 className="text-3xl font-bold text-white mb-2">🎯 4-PHASE MATHEMATICAL TESTING</h3>
+              <p className="text-slate-400 text-lg">Binary Answer: Strategy WORKS or DOESN'T WORK</p>
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-gradient-to-br from-green-900/30 to-blue-900/30 rounded-lg p-5 border border-green-500/30">
-                <h4 className="font-bold text-white mb-3 text-lg">💪 What This System Does</h4>
-                <ul className="space-y-2 text-sm text-slate-300">
-                  <li>✅ <strong>Backtests</strong> on historical data (70%)</li>
-                  <li>✅ <strong>Optimizes</strong> 1000+ parameter combinations</li>
-                  <li>✅ <strong>Forward tests</strong> on unseen data (30%)</li>
-                  <li>✅ <strong>Generates exact signals</strong> with Entry/SL/TP</li>
-                  <li>✅ <strong>Shows timeframes</strong> for each setup</li>
-                  <li>✅ <strong>Trailing stop</strong> logic included</li>
-                </ul>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+              <div className="bg-slate-900/50 rounded-lg p-5 border border-green-500/30">
+                <h4 className="text-xl font-bold text-green-400 mb-3">✅ IF ALL TESTS PASS:</h4>
+                <div className="space-y-2 text-sm text-slate-300">
+                  <p>• Backtest: Win rate 40-50%, PF &gt;1.5</p>
+                  <p>• Optimize: Best result has PF &gt;2.0</p>
+                  <p>• Forward: Similar to backtest (±15%)</p>
+                  <p>• Live Signals: Paper trade confirms edge</p>
+                </div>
+                <div className="mt-4 p-3 bg-green-900/30 rounded">
+                  <p className="text-green-300 font-bold">→ STRATEGY WORKS</p>
+                  <p className="text-slate-400 text-xs mt-1">Go live with 0.01 lot, track 50 trades</p>
+                </div>
               </div>
 
-              <div className="bg-gradient-to-br from-purple-900/30 to-pink-900/30 rounded-lg p-5 border border-purple-500/30">
-                <h4 className="font-bold text-white mb-3 text-lg">📊 No Gaps - Pure Math</h4>
-                <ul className="space-y-2 text-sm text-slate-300">
-                  <li>✅ <strong>Price Action:</strong> Body %, momentum, wicks</li>
-                  <li>✅ <strong>ICT:</strong> Order blocks, FVG, confluence</li>
-                  <li>✅ <strong>Risk:</strong> Fixed SL, R:R, trailing stops</li>
-                  <li>✅ <strong>Filters:</strong> Kill zones, max trades/day</li>
-                  <li>✅ <strong>Stats:</strong> Win rate, PF, DD, expectancy</li>
-                  <li>✅ <strong>Validation:</strong> Forward test on unseen data</li>
-                </ul>
+              <div className="bg-slate-900/50 rounded-lg p-5 border border-red-500/30">
+                <h4 className="text-xl font-bold text-red-400 mb-3">❌ IF ANY TEST FAILS:</h4>
+                <div className="space-y-2 text-sm text-slate-300">
+                  <p>• Backtest: Win rate &lt;40%, PF &lt;1.5</p>
+                  <p>• Optimize: Top results weak or extreme</p>
+                  <p>• Forward: Win rate drops &gt;15%</p>
+                  <p>• Live Signals: Can't execute or wrong WR</p>
+                </div>
+                <div className="mt-4 p-3 bg-red-900/30 rounded">
+                  <p className="text-red-300 font-bold">→ STRATEGY DOESN'T WORK</p>
+                  <p className="text-slate-400 text-xs mt-1">Don't trade it. Try different approach.</p>
+                </div>
               </div>
             </div>
 
-            <div className="mt-6 p-4 bg-yellow-900/30 border border-yellow-500/50 rounded-lg text-center">
-              <p className="text-yellow-300 font-bold text-lg">⚡ Upload M5 data to start</p>
-              <p className="text-slate-400 text-sm mt-2">Optional: H1, H4, Daily for ICT confluence</p>
+            <div className="bg-gradient-to-r from-blue-900/30 to-purple-900/30 border-2 border-blue-500/50 rounded-lg p-6 mb-6">
+              <h4 className="text-2xl font-bold text-blue-400 mb-4 text-center">📋 TESTING CHECKLIST</h4>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-slate-900/50 rounded p-4">
+                  <p className="text-yellow-400 font-bold mb-2">1️⃣ BACKTEST</p>
+                  <ul className="text-xs text-slate-300 space-y-1">
+                    <li>□ Upload M5 CSV</li>
+                    <li>□ Run backtest on 70%</li>
+                    <li>□ Check: WR, PF, DD, Trades</li>
+                    <li>□ All green? → Continue</li>
+                    <li>□ Any red? → STOP</li>
+                  </ul>
+                </div>
+                <div className="bg-slate-900/50 rounded p-4">
+                  <p className="text-purple-400 font-bold mb-2">2️⃣ OPTIMIZE</p>
+                  <ul className="text-xs text-slate-300 space-y-1">
+                    <li>□ Run 1000+ combos</li>
+                    <li>□ Check top result PF &gt;2.0</li>
+                    <li>□ Not extreme params</li>
+                    <li>□ Click "Use Settings"</li>
+                    <li>□ Passed? → Continue</li>
+                  </ul>
+                </div>
+                <div className="bg-slate-900/50 rounded p-4">
+                  <p className="text-blue-400 font-bold mb-2">3️⃣ FORWARD</p>
+                  <ul className="text-xs text-slate-300 space-y-1">
+                    <li>□ Test on unseen 30%</li>
+                    <li>□ Compare to backtest</li>
+                    <li>□ WR within ±15%?</li>
+                    <li>□ Positive profit?</li>
+                    <li>□ Passed? → Continue</li>
+                  </ul>
+                </div>
+                <div className="bg-slate-900/50 rounded p-4">
+                  <p className="text-yellow-400 font-bold mb-2">4️⃣ LIVE SIG</p>
+                  <ul className="text-xs text-slate-300 space-y-1">
+                    <li>□ Generate signals</li>
+                    <li>□ Paper trade 20</li>
+                    <li>□ Track win rate</li>
+                    <li>□ Matches forward?</li>
+                    <li>□ GO LIVE 0.01 lot</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-yellow-900/30 border-2 border-yellow-500 rounded-lg p-6 text-center">
+              <p className="text-yellow-400 font-bold text-2xl mb-3">⚡ START NOW</p>
+              <p className="text-white text-lg mb-2">Upload M5 CSV file above</p>
+              <p className="text-slate-400 text-sm">
+                Need 10,000+ candles (2+ months) | Optional: H1, H4, Daily for ICT confluence
+              </p>
+              <div className="mt-4 flex items-center justify-center gap-2 text-slate-300 text-sm">
+                <div className="flex items-center gap-1">
+                  <span className="text-green-400">●</span> Backtest
+                </div>
+                <span>→</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-purple-400">●</span> Optimize
+                </div>
+                <span>→</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-blue-400">●</span> Forward
+                </div>
+                <span>→</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-yellow-400">●</span> Live
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-slate-900/50 rounded-lg p-4 border border-slate-700">
+                <h5 className="font-bold text-white mb-2 text-sm">📊 What Gets Tested:</h5>
+                <ul className="space-y-1 text-xs text-slate-400">
+                  <li>• Price Action: Momentum, breakouts, rejections</li>
+                  <li>• ICT: Order blocks, FVG, confluence</li>
+                  <li>• Risk: Fixed SL/TP, trailing stops</li>
+                  <li>• Stats: Win rate, PF, DD, expectancy</li>
+                </ul>
+              </div>
+              <div className="bg-slate-900/50 rounded-lg p-4 border border-slate-700">
+                <h5 className="font-bold text-white mb-2 text-sm">⏱️ Time Required:</h5>
+                <ul className="space-y-1 text-xs text-slate-400">
+                  <li>• Backtest: 10 seconds</li>
+                  <li>• Optimization: 2-3 minutes (1000+ tests)</li>
+                  <li>• Forward test: 10 seconds</li>
+                  <li>• Live signals: Instant</li>
+                  <li><strong className="text-white">Total: ~5 minutes to full validation</strong></li>
+                </ul>
+              </div>
             </div>
           </div>
         )}
